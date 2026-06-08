@@ -31,10 +31,6 @@ void loop() {
     Serial.print(millivolts/1000.0);
     Serial.print(" +/-: ");
     Serial.println(voltage-millivolts/1000.0);
-    // Serial.print(" Brightness: ");
-    // Serial.println(brightness);
-
-
 
     // analogWrite(LED_PIN1, brightness);
 
