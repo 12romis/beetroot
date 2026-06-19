@@ -32,6 +32,7 @@ void setup() {
 
 void loop() {
     int tdrValue = analogRead(TDR_PIN);
+    float voltage = tdrValue * (3.3 / 4095.0);
     now = millis();
 
     if (tdrValue > TDR_THRESHOLD) { // якщо TDR значення перевищує поріг, вимкнути реле та увімкнути світлодіоди по черзі
@@ -55,5 +56,12 @@ void loop() {
         digitalWrite(LED_PIN1, LOW);
         digitalWrite(LED_PIN2, LOW);
     }
+
+    // виводимо значення TDR та напругу в серійний монітор
+    // Serial.print("TDR Value: ");
+    // Serial.print(tdrValue);
+    // Serial.print(" Voltage: ");
+    // Serial.println(voltage);
+    
 
 }
