@@ -9,8 +9,8 @@ Adafruit_NeoPixel rgb(1, RGB_PIN, NEO_GRB + NEO_KHZ800);
 
 hw_timer_t * timer = NULL;
 
-constexpr int TICK_PERIOD = 4; // minutes
-constexpr int ON_TICK = 1; // munutes
+constexpr int TICK_PERIOD = 60; // minutes, 4 for test
+constexpr int ON_TICK = 15; // munutes, 1 for test
 
 volatile int tick = -1;
 volatile bool motorState = false;
