@@ -2,6 +2,7 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "led_strip.h"
 
 #define RGB_PIN     GPIO_NUM_48
@@ -9,8 +10,8 @@
 #define BTN_PIN     GPIO_NUM_15
 
 #define POLL_MS         10
-#define DEBOUNCE_TICKS  (20  / POLL_MS)   // 20ms → 2 тіки
-#define PRINT_TICKS     (3000 / POLL_MS)  // 3000ms → 300 тіків
+#define DEBOUNCE_TICKS  (20   / POLL_MS)
+#define PRINT_TICKS     (3000 / POLL_MS)
 
 static const char *TAG = "main";
 
@@ -20,6 +21,27 @@ typedef enum {
     BTN_PRESSED,
     BTN_DEBOUNCE_RELEASE,
 } btn_state_t;
+
+// Таблиця кольорів для RGB: {R, G, B}
+static const uint8_t colors[][3] = {
+    {255,   0,   0},  // червоний
+    {  0, 255,   0},  // зелений
+    {  0,   0, 255},  // синій
+    {255, 255,   0},  // жовтий
+    {  0, 255, 255},  // блакитний
+    {255,   0, 255},  // пурпурний
+};
+#define NUM_COLORS (sizeof(colors) / sizeof(colors[0]))
+
+// ISR-callback таймера — викликається кожні 500 мс апаратним таймером.
+// IRAM_ATTR: код розміщується в IRAM (швидка пам'ять),
+// бо під час переривання кеш flash може бути недоступний.
+static void IRAM_ATTR led_blink_cb(void *arg)
+{
+    static bool led_state = false;
+    led_state = !led_state;
+    gpio_set_level(LED_PIN, led_state);
+}
 
 void app_main(void)
 {
@@ -32,9 +54,9 @@ void app_main(void)
     };
     gpio_config(&io_conf);
 
-    io_conf.pin_bit_mask  = (1ULL << BTN_PIN);
-    io_conf.mode          = GPIO_MODE_INPUT;
-    io_conf.pull_down_en  = GPIO_PULLDOWN_ENABLE;
+    io_conf.pin_bit_mask = (1ULL << BTN_PIN);
+    io_conf.mode         = GPIO_MODE_INPUT;
+    io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
     gpio_config(&io_conf);
 
     led_strip_config_t strip_config = {
@@ -50,6 +72,16 @@ void app_main(void)
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip));
     ESP_ERROR_CHECK(led_strip_clear(led_strip));
 
+    // Створення і старт апаратного таймера переривання
+    esp_timer_handle_t blink_timer;
+    const esp_timer_create_args_t blink_args = {
+        .callback        = led_blink_cb,
+        .dispatch_method = ESP_TIMER_ISR,   // викликати callback прямо з ISR
+        .name            = "led_blink",
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&blink_args, &blink_timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(blink_timer, 500 * 1000)); // 500 000 мкс = 500 мс
+
     ESP_LOGI(TAG, "Starting...");
 
     unsigned int count       = 0;
@@ -59,7 +91,7 @@ void app_main(void)
 
     while (1) {
         bool high = gpio_get_level(BTN_PIN) == 1;
-        
+
         switch (state) {
             case BTN_IDLE:
                 if (high) {
@@ -74,7 +106,10 @@ void app_main(void)
                 } else if (++hold_ticks >= DEBOUNCE_TICKS) {
                     state = BTN_PRESSED;
                     count++;
-                    gpio_set_level(LED_PIN, 1);
+                    // Циклічна зміна кольору RGB при кожному кліку
+                    uint8_t ci = (count - 1) % NUM_COLORS;
+                    led_strip_set_pixel(led_strip, 0, colors[ci][0], colors[ci][1], colors[ci][2]);
+                    led_strip_refresh(led_strip);
                 }
                 break;
 
@@ -82,7 +117,6 @@ void app_main(void)
                 if (!high) {
                     state = BTN_DEBOUNCE_RELEASE;
                     hold_ticks = 0;
-                    gpio_set_level(LED_PIN, 0);
                 }
                 break;
 
