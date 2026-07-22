@@ -68,7 +68,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 		memcpy(data, event->data, event->data_len);
 		data[event->data_len] = '\0';
 
-		if (s_handler) s_handler(topic, data);
+		if (s_handler) s_handler(topic, data, mqttClient);
 
 		break;
 	}

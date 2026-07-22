@@ -136,6 +136,17 @@ esp_err_t enc_get_count(const enc_context *ctx, int *current_val)
 	return pcnt_unit_get_count(ctx->enc_handle, current_val);
 }
 
+// Очищення значення PCNT
+esp_err_t enc_clear_count(const enc_context *ctx)
+{
+	if (ctx == NULL || !ctx->initialized)
+	{
+		return ESP_ERR_INVALID_ARG;
+	}
+
+	return pcnt_unit_clear_count(ctx->enc_handle);
+}
+
 //------------- Деініціалізації ENC ---------------
 esp_err_t enc_deinit(enc_context *ctx)
 {

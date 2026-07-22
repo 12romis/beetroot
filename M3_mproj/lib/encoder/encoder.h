@@ -22,3 +22,4 @@ typedef struct
 esp_err_t enc_init(enc_context *ctx);
 esp_err_t enc_get_count(const enc_context *ctx, int *current_val);
 esp_err_t enc_deinit(enc_context *ctx);
+esp_err_t enc_clear_count(const enc_context *ctx);
