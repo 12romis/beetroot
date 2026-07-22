@@ -24,11 +24,11 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 	{
 	case MQTT_EVENT_CONNECTED:
 		ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
-		//        msg_id = esp_mqtt_client_subscribe(client, "controllerstech/test1", 0);
-		//        ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
 
-		// Подписчик: принимает команды ON/OFF
-		esp_mqtt_client_subscribe(client, MQTT_COMMANDS, 0);
+		// Підписник: приймає команди ON/OFF
+		esp_mqtt_client_subscribe(client, MQTT_LED_COMMANDS, 0);
+		// Підписник: приймає кут сервопривода
+		esp_mqtt_client_subscribe(client, MQTT_SERVO_ANGLE, 0);
 
 		// Издатель: отправляет текущее состояние LED
 		esp_mqtt_client_publish(client, MQTT_STATUS, getled_state() ? "ON" : "OFF", 0, 0, 0);
@@ -53,9 +53,9 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 	case MQTT_EVENT_DATA:
 	{
 		// A message arrived on a topic we're subscribed to.
-		ESP_LOGI(TAG, "MQTT_EVENT_DATA");
-		printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
-		printf("DATA=%.*s\r\n", event->data_len, event->data);
+		// ESP_LOGI(TAG, "MQTT_EVENT_DATA");
+		// printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
+		// printf("DATA=%.*s\r\n", event->data_len, event->data);
 
 		// event->topic/event->data are NOT null-terminated and may be
 		// fragments of a larger message, so copy them into local buffers

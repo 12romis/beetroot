@@ -4,18 +4,17 @@
 #include "lwip/err.h"
 #include "lwip/sys.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 #include "encoder.h"
 #include "debounce.h"
+#include "adc.h"
+#include "timer.h"
 
 #include "mqtt.h"
 #include "wifi_setup.h"
 
 static const char TAG[] = "main";
-
-// led management variables
-static bool led_state = false;
-constexpr gpio_num_t LED_GPIO = GPIO_NUM_4;
 
 // encoder and button GPIOs
 const gpio_num_t ENC_A_GPIO = GPIO_NUM_17;
@@ -30,74 +29,111 @@ constexpr int32_t ENCODER_MIN_COUNT = INT16_MIN; // -32768
 constexpr uint16_t LONG_PRESS_TIME = 1000; // час довгого натискання (мс)
 constexpr uint16_t REPEAT_INTERVAL = 500;  // інтервал повторення події (мс)
 
+// Reporting interval for encoder position
+constexpr int64_t REPORT_INTERVAL_US = 2'000'000; // 2 сек
 
+// Servo control variables
+constexpr gpio_num_t SERVO1_GPIO = GPIO_NUM_40;
+constexpr gpio_num_t SERVO2_GPIO = GPIO_NUM_41;
+static constexpr uint8_t CHANNEL_COUNT = 2;
+static constexpr uint16_t FREQ_HZ = 50;
+static constexpr uint16_t PERIOD_MS = 1000 / FREQ_HZ;
+static constexpr uint16_t MAX_ANGLE = 90;
+static constexpr adc_bitwidth_t ADC_BIT = ADC_BITWIDTH_12;
+static constexpr ledc_timer_bit_t LEDC_TIMER_BIT = LEDC_TIMER_12_BIT;
+constexpr int TICKS_FOR_FULL_SERVO_SWEEP = 60; // максимальна кількість імпульсів енкодера для повного обертання серво
+constexpr int SERVO_MIN_PULSE_US = 1000;
+constexpr int SERVO_MAX_PULSE_US = 2000;
+
+// led management variables
+static bool led_state = false;
+constexpr gpio_num_t LED_GPIO = GPIO_NUM_4;
+
+static pwm_context servo2pwm_ctx = {};
+
+
+int angleToDuty(int angle)
+{
+    constexpr int PERIOD_US = PERIOD_MS * 1000; // 1'000'000 / FREQ_HZ = 20 мс при 50Гц
+
+    int max_duty = (1 << LEDC_TIMER_BIT) - 1;
+    int pulse_us = SERVO_MIN_PULSE_US + (angle * (SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US)) / MAX_ANGLE;
+    return (pulse_us * max_duty) / PERIOD_US;
+}
 
 void handle_mqtt_message(const char *topic, const char *data, esp_mqtt_client_handle_t client)
 {
-	if (topic == NULL || data == NULL)
+	if (topic == NULL || data == NULL || client == NULL)
 	{
 		return;
 	}
 
-	if (strcmp(topic, MQTT_COMMANDS) != 0)
+	if (strcmp(topic, MQTT_LED_COMMANDS) == 0)
 	{
-		return;
-	}
-
-	if (client == NULL)
-	{
-		ESP_LOGE(TAG, "MQTT client is NULL");
-		return;
-	}
-
-	// Command: ON/OFF
-	if (strcmp(data, "ON") == 0)
-	{
-		ESP_LOGI(TAG, "Command: LED ON");
-
-		if (gpio_set_level(LED_GPIO, 1) == ESP_OK)
+		// Command: ON/OFF
+		if (strcmp(data, "ON") == 0)
 		{
-			led_state = true;
-			esp_mqtt_client_publish(client, MQTT_STATUS, led_state ? "ON" : "OFF", 0, 0, 0);
+			ESP_LOGI(TAG, "Command: LED ON");
+
+			if (gpio_set_level(LED_GPIO, 1) == ESP_OK)
+			{
+				led_state = true;
+				esp_mqtt_client_publish(client, MQTT_STATUS, led_state ? "ON" : "OFF", 0, 0, 0);
+			}
+
+			else
+			{
+				ESP_LOGE(TAG, "Failed to set LED ON");
+			}
 		}
 
-		else
+		else if (strcmp(data, "OFF") == 0)
 		{
-			ESP_LOGE(TAG, "Failed to set LED ON");
-		}
-	}
+			ESP_LOGI(TAG, "Command: LED OFF");
 
-	else if (strcmp(data, "OFF") == 0)
-	{
-		ESP_LOGI(TAG, "Command: LED OFF");
-
-		if (gpio_set_level(LED_GPIO, 0) == ESP_OK)
-		{
-			led_state = false;
-			esp_mqtt_client_publish(client, MQTT_STATUS, led_state ? "ON" : "OFF", 0, 0, 0);
+			if (gpio_set_level(LED_GPIO, 0) == ESP_OK)
+			{
+				led_state = false;
+				esp_mqtt_client_publish(client, MQTT_STATUS, led_state ? "ON" : "OFF", 0, 0, 0);
+			}
+			else
+			{
+				ESP_LOGE(TAG, "Failed to set LED OFF");
+			}
 		}
-		else
-		{
-			ESP_LOGE(TAG, "Failed to set LED OFF");
-		}
-	}
 
-	// Status command: returns the current state of the LED
-	else if (strcmp(data, "STATUS") == 0)
-	{
-		if (esp_mqtt_client_publish(client, MQTT_STATUS, led_state ? "ON" : "OFF", 0, 0, 0) < 0)
+		// Status command: returns the current state of the LED
+		else if (strcmp(data, "STATUS") == 0)
 		{
-			ESP_LOGE(TAG, "Failed to publish status");
+			if (esp_mqtt_client_publish(client, MQTT_STATUS, led_state ? "ON" : "OFF", 0, 0, 0) < 0)
+			{
+				ESP_LOGE(TAG, "Failed to publish status");
+			}
+			else
+			{
+				ESP_LOGI(TAG, "Status sent");
+			}
 		}
 		else
 		{
-			ESP_LOGI(TAG, "Status sent");
+			ESP_LOGW(TAG, "Unknown command: %s", data);
 		}
 	}
-	else
+
+	else if(strcmp(topic, MQTT_SERVO_ANGLE) == 0)
 	{
-		ESP_LOGW(TAG, "Unknown command: %s", data);
+		int angle = atoi(data);
+		if (angle < 0) angle = 0;
+		if (angle > MAX_ANGLE) angle = MAX_ANGLE;
+		int duty = angleToDuty(angle);
+		esp_err_t err = pwm_set_duty(&servo2pwm_ctx, duty); // mqtt серво2
+		if (err != ESP_OK)
+		{
+			ESP_LOGE(TAG, "Failed to set PWM duty for Servo2");
+		}
 	}
+
+	
 }
 
 bool getled_state()
@@ -119,6 +155,15 @@ static void buttons_process(deb *btns, uint8_t btns_count, enc_context &enc_ctx)
 		}
 	}
 }
+
+int encoderToServoAngle(int raw_ticks)
+{
+    int angle = (raw_ticks * MAX_ANGLE) / TICKS_FOR_FULL_SERVO_SWEEP;
+    if (angle < 0)   angle = 0;
+    if (angle > MAX_ANGLE) angle = MAX_ANGLE;
+    return angle;
+}
+
 
 extern "C" void app_main(void)
 {
@@ -171,6 +216,27 @@ extern "C" void app_main(void)
 	btns[0].shiftRegister = 0x0F; // 4 - 0x0F ; 8 - 0xFF
 	deb_init(&btns[0]);
 
+    // PWM Initialization for Servo1 Control
+    pwm_context servo1pwm_ctx = {};
+    servo1pwm_ctx.gpio_num = SERVO1_GPIO;
+    servo1pwm_ctx.timer_num = LEDC_TIMER_0;
+    servo1pwm_ctx.channel = LEDC_CHANNEL_0;
+    servo1pwm_ctx.freq_hz = FREQ_HZ;
+    servo1pwm_ctx.duty_resolution = LEDC_TIMER_BIT;
+    servo1pwm_ctx.speed_mode = LEDC_LOW_SPEED_MODE;
+    servo1pwm_ctx.initialized = false;
+    pwm_init(&servo1pwm_ctx);
+
+	// PWM Initialization for Servo2 Control
+    servo2pwm_ctx.gpio_num = SERVO2_GPIO;
+    servo2pwm_ctx.timer_num = LEDC_TIMER_0;
+    servo2pwm_ctx.channel = LEDC_CHANNEL_1;
+    servo2pwm_ctx.freq_hz = FREQ_HZ;
+    servo2pwm_ctx.duty_resolution = LEDC_TIMER_BIT;
+    servo2pwm_ctx.speed_mode = LEDC_LOW_SPEED_MODE;
+    servo2pwm_ctx.initialized = false;
+    pwm_init(&servo2pwm_ctx);
+
 
 	wifi_init_sta();
 
@@ -181,7 +247,9 @@ extern "C" void app_main(void)
 	}
 
 	int current_enc_val = 0;
-	int last_published_enc_val = current_enc_val;
+	int64_t last_report_us = 0;
+	int last_published_angle = -1; // -1, щоб перша реальна публікація точно відбулась
+
 	// Get the MQTT client handle
 	esp_mqtt_client_handle_t mqtt_client = get_mqtt_client();
 
@@ -194,14 +262,22 @@ extern "C" void app_main(void)
 		int a_state = gpio_get_level(ENC_A_GPIO);
 		int b_state = gpio_get_level(ENC_B_GPIO);
 
-		ESP_LOGD(TAG, "Position: %d | A: %d | B: %d", current_enc_val, a_state, b_state);
+		// Calculate the servo angle based on encoder value and set PWM duty cycle
+		int angle = encoderToServoAngle(current_enc_val);
 
-		if (current_enc_val != last_published_enc_val)
+		if (angle != last_published_angle)
 		{
-			char pos_str[12];
-			snprintf(pos_str, sizeof(pos_str), "%d", current_enc_val);
-			esp_mqtt_client_publish(mqtt_client, MQTT_ENC_POS, pos_str, 0, 0, 0);
-			last_published_enc_val = current_enc_val;
+			char angle_str[8];
+			snprintf(angle_str, sizeof(angle_str), "%d", angle);
+			esp_mqtt_client_publish(mqtt_client, MQTT_SERVO_ANGLE, angle_str, 0, 0, 0); // серво2 — через MQTT
+			last_published_angle = angle;
+		}
+
+		int duty = angleToDuty(angle);
+		esp_err_t err = pwm_set_duty(&servo1pwm_ctx, duty); // локальне серво1
+		if (err != ESP_OK)
+		{
+			ESP_LOGE(TAG, "Failed to set PWM duty for Servo1");
 		}
 
 		// Зчитуємо стан кнопки та керуємо LED
@@ -210,6 +286,20 @@ extern "C" void app_main(void)
 
 		gpio_set_level(LED_GPIO, led_state);
 
-		vTaskDelay(pdMS_TO_TICKS(50));
+		// Report encoder position every REPORT_INTERVAL_US microseconds
+		int64_t now = esp_timer_get_time();
+		if (now - last_report_us >= REPORT_INTERVAL_US)
+		{
+			ESP_LOGI(TAG, "Encoder position: %d | Servo Angle: %d | Duty: %d | A: %d | B: %d", current_enc_val, angle, duty, a_state, b_state);
+			
+			// Publish the encoder position to MQTT
+			char pos_str[12];
+			snprintf(pos_str, sizeof(pos_str), "%d", current_enc_val);
+			esp_mqtt_client_publish(mqtt_client, MQTT_ENC_POS, pos_str, 0, 0, 0);
+			
+			last_report_us = now;
+		}
+
+		vTaskDelay(pdMS_TO_TICKS(10));
 	}
 }
