@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <time.h>
 #include "driver/gpio.h"
+#include "driver/uart.h"
 #include "lwip/err.h"
 #include "lwip/sys.h"
 #include "esp_log.h"
@@ -23,18 +24,39 @@ constexpr uint16_t LONG_PRESS_TIME = 1000; // час довгого натиск
 constexpr uint16_t REPEAT_INTERVAL = 500;  // інтервал повторення події (мс)
 
 // led management variables
-static bool led_state = false;
+static bool stm32_led_state = false;
 constexpr gpio_num_t LED_GPIO = GPIO_NUM_4;
 
 // uart management variables
 constexpr gpio_num_t UART1_TX_GPIO = GPIO_NUM_17;
 constexpr gpio_num_t UART1_RX_GPIO = GPIO_NUM_18;
+constexpr uart_port_t UART1_PORT = UART_NUM_1;
+constexpr int UART1_BAUD_RATE = 115200;
+constexpr int UART1_RX_BUF_SIZE = 256;
+constexpr int UART1_TX_BUF_SIZE = 256;
 
-
+// uart command codes (protocol shared with STM32)
+constexpr uint8_t CMD_LED_OFF = 0xA0;
+constexpr uint8_t CMD_LED_ON = 0xA1;
 
 bool getled_state()
 {
-	return led_state;
+	return stm32_led_state;
+}
+
+static void uart1_init(void)
+{
+	uart_config_t uart_config = {};
+	uart_config.baud_rate = UART1_BAUD_RATE;
+	uart_config.data_bits = UART_DATA_8_BITS;
+	uart_config.parity = UART_PARITY_DISABLE;
+	uart_config.stop_bits = UART_STOP_BITS_1;
+	uart_config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
+	uart_config.source_clk = UART_SCLK_DEFAULT;
+
+	ESP_ERROR_CHECK(uart_driver_install(UART1_PORT, UART1_RX_BUF_SIZE, UART1_TX_BUF_SIZE, 0, NULL, 0));
+	ESP_ERROR_CHECK(uart_param_config(UART1_PORT, &uart_config));
+	ESP_ERROR_CHECK(uart_set_pin(UART1_PORT, UART1_TX_GPIO, UART1_RX_GPIO, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
 }
 
 static void buttons_process(deb *btns, uint8_t btns_count)
@@ -46,7 +68,9 @@ static void buttons_process(deb *btns, uint8_t btns_count)
 
 		if (event == LONG_PRESS_EVENT || event == CLICK_EVENT)
 		{
-			led_state = !led_state;
+			stm32_led_state = !stm32_led_state;
+			uint8_t cmd = stm32_led_state ? CMD_LED_ON : CMD_LED_OFF;
+			uart_write_bytes(UART1_PORT, (const char *)&cmd, sizeof(cmd));
 		}
 	}
 }
@@ -83,14 +107,30 @@ extern "C" void app_main(void)
 	btns[0].shiftRegister = 0x0F; // 4 - 0x0F ; 8 - 0xFF
 	deb_init(&btns[0]);
 
+	// UART1 initialization
+	uart1_init();
+
 	while (1)
 	{
 		// Зчитуємо стан кнопки та передаємо по UART
 		ESP_ERROR_CHECK(deb_btns_update(btns, BUTTONS_COUNT));
 		buttons_process(btns, BUTTONS_COUNT);
 
-		gpio_set_level(LED_GPIO, led_state);
+		// Зчитуємо дані з UART1 та керуємо LED
+		uint8_t cmd;
+		int len = uart_read_bytes(UART1_PORT, &cmd, sizeof(cmd), 0);
 
+		if (len > 0)
+		{
+			if (cmd == CMD_LED_ON)
+			{
+				gpio_set_level(LED_GPIO, true);
+			}
+			else if (cmd == CMD_LED_OFF)
+			{
+				gpio_set_level(LED_GPIO, false);
+			}
+		}
 		
 
 		vTaskDelay(pdMS_TO_TICKS(10));
