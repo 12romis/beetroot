@@ -18,7 +18,7 @@
 static const char TAG[] = "main";
 
 // button
-constexpr gpio_num_t ENC_BUTTON_GPIO = GPIO_NUM_15;
+constexpr gpio_num_t BUTTON_GPIO = GPIO_NUM_18;
 constexpr uint8_t BUTTONS_COUNT = 1;
 constexpr uint16_t LONG_PRESS_TIME = 1000; // час довгого натискання (мс)
 constexpr uint16_t REPEAT_INTERVAL = 500;  // інтервал повторення події (мс)
@@ -29,7 +29,7 @@ constexpr gpio_num_t LED_GPIO = GPIO_NUM_4;
 
 // uart management variables
 constexpr gpio_num_t UART1_TX_GPIO = GPIO_NUM_17;
-constexpr gpio_num_t UART1_RX_GPIO = GPIO_NUM_18;
+constexpr gpio_num_t UART1_RX_GPIO = GPIO_NUM_16;
 constexpr uart_port_t UART1_PORT = UART_NUM_1;
 constexpr int UART1_BAUD_RATE = 115200;
 constexpr int UART1_RX_BUF_SIZE = 256;
@@ -71,6 +71,9 @@ static void buttons_process(deb *btns, uint8_t btns_count)
 			stm32_led_state = !stm32_led_state;
 			uint8_t cmd = stm32_led_state ? CMD_LED_ON : CMD_LED_OFF;
 			uart_write_bytes(UART1_PORT, (const char *)&cmd, sizeof(cmd));
+			ESP_LOGI(TAG, "Button event: %s, LED on STM32 state: %s", 
+				event == LONG_PRESS_EVENT ? "LONG_PRESS_EVENT" : "CLICK_EVENT", 
+				stm32_led_state ? "ON" : "OFF");
 		}
 	}
 }
@@ -90,7 +93,7 @@ extern "C" void app_main(void)
 
 	// GPIO BUTTON initialization
 	gpio_config_t btn_conf = {};
-	btn_conf.pin_bit_mask = (1ULL << ENC_BUTTON_GPIO);
+	btn_conf.pin_bit_mask = (1ULL << BUTTON_GPIO);
 	btn_conf.mode = GPIO_MODE_INPUT;
 	btn_conf.pull_up_en = GPIO_PULLUP_ENABLE;
 	btn_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
@@ -99,7 +102,7 @@ extern "C" void app_main(void)
 
 	// DEBOUNCE initialization
 	deb btns[BUTTONS_COUNT] = {};
-	btns[0].pin = ENC_BUTTON_GPIO;
+	btns[0].pin = BUTTON_GPIO;
 	btns[0].longPressTime = LONG_PRESS_TIME;
 	btns[0].repeatInterval = REPEAT_INTERVAL;
 	btns[0].activeLevel = 0;	  // Натиснута - 0; натиснута - 1
@@ -125,10 +128,12 @@ extern "C" void app_main(void)
 			if (cmd == CMD_LED_ON)
 			{
 				gpio_set_level(LED_GPIO, true);
+				ESP_LOGI(TAG, "Received command: CMD_LED_ON");
 			}
 			else if (cmd == CMD_LED_OFF)
 			{
 				gpio_set_level(LED_GPIO, false);
+				ESP_LOGI(TAG, "Received command: CMD_LED_OFF");
 			}
 		}
 		
