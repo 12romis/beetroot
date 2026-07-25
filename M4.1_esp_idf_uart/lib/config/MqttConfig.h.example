@@ -1,0 +1,12 @@
+#pragma once
+
+#include <stdint.h>
+
+namespace config {
+    // Copy to WifiConfig.h and fill with real values.
+    constexpr const char* MQTT_BROKER_URI = ""; // Set your MQTT broker URI here
+    constexpr const uint16_t MQTT_BROKER_PORT = 8883; // Set your MQTT broker port here
+    constexpr const char* MQTT_USERNAME = ""; // Set your MQTT username here
+    constexpr const char* MQTT_PASSWORD = ""; // Set your MQTT password here
+
+}  // namespace config
