@@ -1,0 +1,10 @@
+build/
+sdkconfig
+lib/config/WifiConfig.h
+lib/config/MqttConfig.h
+managed_components/
+dependencies.lock
+*.log
+*.bin
+*.elf
+*.map
