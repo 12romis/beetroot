@@ -1,5 +1,14 @@
 {
-    "idf.currentSetup": "/home/romiskub/.espressif/v6.0.1/esp-idf",
-    "idf.port": "/dev/ttyACM0",
-    "idf.flashType": "UART"
+  "idf.currentSetup": "/home/romiskub/.espressif/v6.0.1/esp-idf",
+  "idf.port": "/dev/ttyACM0",
+  "idf.flashType": "UART",
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32s3"
+  },
+  "clangd.path": "/home/romiskub/.espressif/tools/esp-clang/esp-20.1.1_20250829/esp-clang/bin/clangd",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=**",
+    "--compile-commands-dir=/home/romiskub/MyApps/BeetRoot/M4.4_hw_spi_bmp280/build"
+  ]
 }

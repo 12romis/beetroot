@@ -1,122 +1,133 @@
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
-#include "driver/gpio.h"
-#include "lwip/err.h"
-#include "lwip/sys.h"
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_log.h"
-#include "ds1307.h"  // Підключення бібліотеки для роботи з RTC DS1307
-#include "ssd1306.h" // Підключення бібліотеки для роботи з OLED-дисплеєм SSD1306
+#include "driver/i2c_master.h" // новий I2C-драйвер (той самий, що використовує nopnop)
 
-// Піни шини I2C
-#define SDA_GRPIO GPIO_NUM_8
-#define SCL_GPIO GPIO_NUM_9
-#define RESET_GPIO -1              // немає піна RESET на 4-піновому модулі
+#include "ssd1306.h" // nopnop2002 — драйвер OLED SSD1306 (новий драйвер)
 
-static const char TAG[] = "main";
+static const char *TAG = "main";
 
-// Назви днів тижня. Індекс 0 = неділя
-const char daysOfTheWeek[7][13] = {
+// --- Спільна I2C-шина: OLED (0x3C) + DS1307 (0x68) на одних пінах ---
+// nopnop створює шину (i2c_new_master_bus) на I2C_PORT_0; DS1307 підключаємо
+// до тієї ж шини окремим пристроєм зі СВОЄЮ частотою (новий драйвер це вміє).
+#define I2C_SDA_GPIO GPIO_NUM_8
+#define I2C_SCL_GPIO GPIO_NUM_9
+#define DS1307_ADDR 0x68
+#define DS1307_FREQ_HZ 100000 // 100 кГц — максимум для DS1307
+
+// Назви днів тижня. Індекс 0 = неділя (відповідає tm_wday)
+static const char *daysOfTheWeek[7] = {
     "Sunday", "Monday", "Tuesday", "Wednesday",
     "Thursday", "Friday", "Saturday"};
 
+// --- DS1307: дані в регістрах у форматі BCD ---
+static inline uint8_t bcd2dec(uint8_t v) { return (v >> 4) * 10 + (v & 0x0f); }
+static inline uint8_t dec2bcd(uint8_t v) { return ((v / 10) << 4) | (v % 10); }
 
-// Показання датчика BMP280 за один вимір
-struct SensorData
+// Читає час з DS1307 (7 регістрів, починаючи з 0x00)
+static esp_err_t ds1307_read(i2c_master_dev_handle_t rtc, struct tm *t)
 {
-  float temperature; // Температура, °C
-  float pressure;    // Тиск, гПа
-};
+    uint8_t reg = 0x00;
+    uint8_t d[7];
+    // записати адресу регістра + одразу прочитати 7 байтів
+    esp_err_t err = i2c_master_transmit_receive(rtc, &reg, 1, d, sizeof(d), 100);
+    if (err != ESP_OK)
+        return err;
 
-// Доповнює число нулем зліва, якщо воно однозначне (напр. 5 -> "05")
-String twoDigits(int value)
-{
-  return (value < 10 ? "0" : "") + String(value);
+    t->tm_sec = bcd2dec(d[0] & 0x7f); // біт7 = CH (clock halt)
+    t->tm_min = bcd2dec(d[1] & 0x7f);
+    t->tm_hour = bcd2dec(d[2] & 0x3f); // 24-годинний режим
+    t->tm_wday = (d[3] & 0x07) - 1;    // DS1307: 1-7  ->  tm_wday 0-6
+    t->tm_mday = bcd2dec(d[4] & 0x3f);
+    t->tm_mon = bcd2dec(d[5] & 0x1f) - 1; // 1-12  ->  0-11
+    t->tm_year = bcd2dec(d[6]) + 100;     // 20xx  ->  роки від 1900
+    return ESP_OK;
 }
 
-// Зчитує поточні показання температури та тиску з BMP280
-// SensorData readSensorData()
-// {
-//   SensorData data;
-//   data.temperature = bmp.readTemperature();
-//   data.pressure = bmp.readPressure() / 100.0F; // переведення з Па у гПа
-//   return data;
-// }
-
-// Формує рядок дати у форматі ДД.ММ.РРРР
-String formatDate(const DateTime &dt_now)
+// Записує час у DS1307 і запускає годинник (біт CH = 0)
+static esp_err_t ds1307_write(i2c_master_dev_handle_t rtc, const struct tm *t)
 {
-  return twoDigits(dt_now.day()) + "." + twoDigits(dt_now.month()) + "." + String(dt_now.year());
+    uint8_t d[8];
+    d[0] = 0x00;                       // стартовий регістр
+    d[1] = dec2bcd(t->tm_sec) & 0x7f;  // CH=0 -> годинник іде
+    d[2] = dec2bcd(t->tm_min);
+    d[3] = dec2bcd(t->tm_hour) & 0x3f; // 24h
+    d[4] = dec2bcd(t->tm_wday + 1);
+    d[5] = dec2bcd(t->tm_mday);
+    d[6] = dec2bcd(t->tm_mon + 1);
+    d[7] = dec2bcd(t->tm_year - 100);
+    return i2c_master_transmit(rtc, d, sizeof(d), 100);
 }
 
-// Формує рядок часу у форматі ГГ:ХХ:СС
-String formatTime(const DateTime &dt_now)
+// Виводить день тижня, дату і час на OLED-дисплей.
+// Екран 128x64 = 8 сторінок по 8px; символ 8px завширшки -> 16 символів у рядку.
+static void updateDisplay(SSD1306_t *oled, const struct tm *t)
 {
-  return twoDigits(dt_now.hour()) + ":" + twoDigits(dt_now.minute()) + ":" + twoDigits(dt_now.second());
+    char line[40];
+    const char *dayName = (t->tm_wday >= 0 && t->tm_wday < 7)
+                              ? daysOfTheWeek[t->tm_wday]
+                              : "?";
+
+    // Сторінка 0 — день тижня. Доповнюємо пробілами до 16 символів (%-16s),
+    // щоб новий текст сам затирав старий без окремого clear_line — без мерехтіння.
+    snprintf(line, sizeof(line), "%-16s", dayName);
+    ssd1306_display_text(oled, 0, line, strlen(line), false);
+
+    // Сторінка 2 — дата
+    snprintf(line, sizeof(line), "%02d.%02d.%04d",
+             t->tm_mday, t->tm_mon + 1, t->tm_year + 1900);
+    ssd1306_display_text(oled, 2, line, strlen(line), false);
+
+    // Сторінка 4 — час
+    snprintf(line, sizeof(line), "%02d:%02d:%02d",
+             t->tm_hour, t->tm_min, t->tm_sec);
+    ssd1306_display_text(oled, 4, line, strlen(line), false);
 }
-
-// Повертає назву дня тижня для заданого моменту часу
-String formatDayOfWeek(const DateTime &dt_now)
-{
-  return daysOfTheWeek[dt_now.dayOfTheWeek()];
-}
-
-// Виводить день тижня, дату, час і показання датчика на OLED-дисплей
-void updateDisplay(const SSD1306_t *oled_dev, 
-	const DateTime &dt_now, 
-	// const SensorData &sensorData
-)
-{
-	ssd1306_clear_screen(&oled_dev, false);  // Очищення екрану
-	ssd1306_contrast(&oled_dev, 0xff);  // Максимальна контрастність
-
-	//   u8g2.setFont(u8g2_font_6x13B_t_cyrillic); 
-	// int timeWidth = u8g2.getUTF8Width(formatTime(dt_now).c_str());
-	// int screenWidth = u8g2.getDisplayWidth();
-	// int dateX = (screenWidth - timeWidth) / 2; // Центрування часу по горизонталі
-	// u8g2.drawUTF8(dateX, 14, formatTime(dt_now).c_str());
-	char timeStr[9] = formatTime(dt_now).c_str();
-	ssd1306_display_text(&oled_dev, 1, timeStr, strlen(timeStr), false);
-
-	char dayStr[20] = formatDayOfWeek(dt_now).c_str();
-	ssd1306_display_text(&oled_dev, 5, 30, dayStr, strlen(dayStr), false);
-
-	char dateStr[20] = formatDate(dt_now).c_str();
-	ssd1306_display_text(&oled_dev, 62, 30, dateStr, strlen(dateStr), false);
-
-//   u8g2.drawUTF8(5, 45, ("Temp: " + String(sensorData.temperature, 1) + " C").c_str());
-//   u8g2.drawUTF8(5, 60, ("Press: " + String(sensorData.pressure, 1) + " hPa").c_str());
-
-}
-
-
 
 extern "C" void app_main(void)
 {
-	// Initialize RTC DS1307
-	i2c_dev_t dev = {0};
-	struct tm dt_now;
-	ds1307_init_desc(&dev, I2C_NUM_0, SDA_GRPIO, SCL_GPIO);
+    // --- OLED: nopnop створює нову I2C-шину і додає дисплей як пристрій ---
+    SSD1306_t oled;
+    i2c_master_init(&oled, I2C_SDA_GPIO, I2C_SCL_GPIO, -1); // reset = -1 (немає піна)
+    ssd1306_init(&oled, 128, 64);
+    ssd1306_clear_screen(&oled, false);
+    ssd1306_contrast(&oled, 0xff);
 
-	SSD1306_t oled_dev;
-    // Ініціалізація I2C-шини та панелі
-    i2c_master_init(&oled_dev, SDA_GRPIO, SCL_GPIO, RESET_GPIO);
-    ssd1306_init(&oled_dev, 128, 64);
+    // --- DS1307 на ТУ САМУ шину, окремим пристроєм зі своєю частотою 100 кГц ---
+    i2c_master_dev_handle_t rtc;
+    i2c_device_config_t rtc_cfg = {};
+    rtc_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    rtc_cfg.device_address = DS1307_ADDR;
+    rtc_cfg.scl_speed_hz = DS1307_FREQ_HZ;
+    ESP_ERROR_CHECK(i2c_master_bus_add_device(oled._i2c_bus_handle, &rtc_cfg, &rtc));
 
-    ssd1306_clear_screen(&oled_dev, false);  // Очищення екрану
-    ssd1306_contrast(&oled_dev, 0xff);  // Максимальна контрастність
+    // --- Один раз виставити час DS1307 ---
+    // struct tm set = {};
+    // set.tm_year = 2026 - 1900; set.tm_mon = 8 - 1; set.tm_mday = 1;
+    // set.tm_wday = 6; set.tm_hour = 15; set.tm_min = 10; set.tm_sec = 15;
+    // ESP_ERROR_CHECK(ds1307_write(rtc, &set));
 
+    struct tm now;
+    while (1)
+    {
+        esp_err_t err = ds1307_read(rtc, &now);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "DS1307 read failed: %s", esp_err_to_name(err));
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
 
-	while (1)
-	{
-		ds1307_get_time(&dev, &dt_now);
+        ESP_LOGI(TAG, "%s %02d.%02d.%04d %02d:%02d:%02d",
+                 daysOfTheWeek[now.tm_wday], now.tm_mday, now.tm_mon + 1,
+                 now.tm_year + 1900, now.tm_hour, now.tm_min, now.tm_sec);
 
-		// DateTime now = readCurrentTime();
-		// SensorData sensorData = readSensorData();
+        updateDisplay(&oled, &now);
 
-		ESP_LOGI(TAG, "Current time: %s, %s %s", formatDayOfWeek(dt_now), formatDate(dt_now), formatTime(dt_now));
-
-		updateDisplay(&oled_dev, dt_now);
-
-		vTaskDelay(pdMS_TO_TICKS(1000));
-	}
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
 }
