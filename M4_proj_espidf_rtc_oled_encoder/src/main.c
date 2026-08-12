@@ -29,6 +29,7 @@ void app_main(void)
 
 		rtc_read(data); // Читання часу з RTC
 		bme280_read(data); // Читання даних з BME280
+		handle_click_event(data); // Обробка натискань кнопки енкодера
 		oled_update(data); // Оновлення OLED-дисплея
 
 		ESP_LOGI(TAG, "Time: %04d-%02d-%02d %02d:%02d:%02d",

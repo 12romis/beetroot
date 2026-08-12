@@ -25,6 +25,12 @@ typedef enum
 	ENV_HISTORY_SCREEN,
 } screen_mode_t;	
 
+typedef enum { 
+	FIELD_NORMAL, 
+	FIELD_SELECTED, 
+	FIELD_EDITING 
+} field_state_t;
+
 typedef struct
 {
 	bme280_data_t bme280_data;
@@ -51,3 +57,5 @@ void rtc_read(app_data_t *app_data);
 void bme280_read(app_data_t *app_data);
 // Оновлення OLED-дисплея
 void oled_update(app_data_t *app_data);
+// Обробка кліку кнопки енкодера (навігація по меню/екранах)
+void handle_click_event(app_data_t *app_data);

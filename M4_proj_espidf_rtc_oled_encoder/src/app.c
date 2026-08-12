@@ -252,6 +252,14 @@ static void encoder_btn_cb(void *arg, void *usr_data)
 	data->encoder_data.pressed = true;
 }
 
+// Колбек подвійного кліку кнопки енкодера — навігація "назад"
+static void encoder_btn_double_cb(void *arg, void *usr_data)
+{
+	app_data_t *data = (app_data_t *)usr_data;
+	data->screen_mode = MAIN_SCREEN;
+}
+
+
 // Ініціалізація енкодера
 void encoder_dev_init()
 {
@@ -291,6 +299,7 @@ void encoder_dev_init()
 	}
 
 	iot_button_register_cb(s_btn, BUTTON_SINGLE_CLICK, encoder_btn_cb, &app_data);
+	iot_button_register_cb(s_btn, BUTTON_DOUBLE_CLICK, encoder_btn_double_cb, &app_data);
 }
 
 // Читання часу з RTC
@@ -317,8 +326,36 @@ void bme280_read(app_data_t *app_data)
 	app_data->bme280_data.pressure /= 100.0f;
 }
 
-static void update_main_screen(app_data_t *app_data, int selected_menu_item)
+
+
+// малює одне поле (наприклад "14") на позиції x,y і повертає x для наступного поля
+static u8g2_uint_t draw_time_field(u8g2_uint_t x, u8g2_uint_t y, const char *text, field_state_t state)
 {
+	u8g2_uint_t w = u8g2_GetStrWidth(&u8g2, text);
+	u8g2_uint_t asc = u8g2_GetAscent(&u8g2);
+	u8g2_uint_t desc = -u8g2_GetDescent(&u8g2); // у u8g2 descent зазвичай від'ємний
+
+	if (state == FIELD_SELECTED)
+	{
+		u8g2_DrawFrame(&u8g2, x - 1, y - asc - 1, w + 2, asc + desc + 2);
+	}
+	else if (state == FIELD_EDITING)
+	{
+		u8g2_SetDrawColor(&u8g2, 1);
+		u8g2_DrawBox(&u8g2, x - 1, y - asc - 1, w + 2, asc + desc + 2);
+		u8g2_SetDrawColor(&u8g2, 0); // текст поверх залитого боксу = "інверсія"
+	}
+
+	u8g2_DrawStr(&u8g2, x, y, text);
+	u8g2_SetDrawColor(&u8g2, 1); // обов'язково повернути назад для наступних елементів
+
+	return x + w;
+}
+
+
+static void update_main_screen(app_data_t *app_data)
+{
+	int selected_menu_item = ((app_data->encoder_data.position % 3) + 3) % 3;
 	char text_buf[64];
 
 	u8g2_ClearBuffer(&u8g2);
@@ -348,11 +385,75 @@ static void update_main_screen(app_data_t *app_data, int selected_menu_item)
 
 	u8g2_SetFont(&u8g2, u8g2_font_6x10_tf);
 	// Меню
-	snprintf(text_buf, sizeof(text_buf), "%schange time", selected_menu_item == 0 ? "> " : "");
+	snprintf(text_buf, sizeof(text_buf), "%schange time", selected_menu_item == 0 ? ">" : " ");
 	u8g2_DrawStr(&u8g2, 2, 40, text_buf);
-	snprintf(text_buf, sizeof(text_buf), "%schange date", selected_menu_item == 1 ? "> " : "");
+	snprintf(text_buf, sizeof(text_buf), "%schange date", selected_menu_item == 1 ? ">" : " ");
 	u8g2_DrawStr(&u8g2, 2, 50, text_buf);
-	snprintf(text_buf, sizeof(text_buf), "%senv history", selected_menu_item == 2 ? "> " : "");
+	snprintf(text_buf, sizeof(text_buf), "%senv history", selected_menu_item == 2 ? ">" : " ");
+	u8g2_DrawStr(&u8g2, 2, 60, text_buf);
+
+	u8g2_SendBuffer(&u8g2);
+}
+
+static void update_change_time_screen(app_data_t *app_data)
+{
+	// u8g2_uint_t x = 10, y = 30;
+	// char buf[4];
+
+	// snprintf(buf, sizeof(buf), "%02d", app_data->time.tm_hour);
+	// x = draw_time_field(x, y, buf, hour_state);   // hour_state: NORMAL/SELECTED/EDITING
+
+	// x = draw_time_field(x, y, ":", FIELD_NORMAL); // роздільник — завжди звичайний
+
+	// snprintf(buf, sizeof(buf), "%02d", app_data->time.tm_min);
+	// x = draw_time_field(x, y, buf, min_state);
+
+
+
+	int selected_item = ((app_data->encoder_data.position % 2) + 2) % 2;
+	char text_buf[32];
+
+	u8g2_ClearBuffer(&u8g2);
+	u8g2_SetFont(&u8g2, u8g2_font_logisoso16_tf);
+
+	// Час
+	snprintf(text_buf, sizeof(text_buf),
+			 "%02d:%02d",
+			 app_data->time.tm_hour,
+			 app_data->time.tm_min);
+	u8g2_uint_t w = u8g2_GetStrWidth(&u8g2, text_buf);
+	u8g2_uint_t x = (u8g2_GetDisplayWidth(&u8g2) - w) / 2;
+	u8g2_DrawStr(&u8g2, x, 30, text_buf);
+
+	// Back to menu
+	u8g2_SetFont(&u8g2, u8g2_font_6x10_tf);
+	snprintf(text_buf, sizeof(text_buf), "Back");
+	u8g2_DrawStr(&u8g2, 2, 60, text_buf);
+
+	u8g2_SendBuffer(&u8g2);
+}
+
+static void update_change_date_screen(app_data_t *app_data)
+{
+	int selected_item = ((app_data->encoder_data.position % 3) + 3) % 3;
+	char text_buf[32];
+
+	u8g2_ClearBuffer(&u8g2);
+	u8g2_SetFont(&u8g2, u8g2_font_logisoso16_tf);
+
+	// Дата
+	snprintf(text_buf, sizeof(text_buf),
+			 "%02d.%02d.%04d",
+			 app_data->time.tm_mday,
+			 app_data->time.tm_mon + 1,
+			 app_data->time.tm_year + 1900);
+	u8g2_uint_t w = u8g2_GetStrWidth(&u8g2, text_buf);
+	u8g2_uint_t x = (u8g2_GetDisplayWidth(&u8g2) - w) / 2;
+	u8g2_DrawStr(&u8g2, x, 30, text_buf);
+
+	// Back to menu
+	u8g2_SetFont(&u8g2, u8g2_font_6x10_tf);
+	snprintf(text_buf, sizeof(text_buf), "Back");
 	u8g2_DrawStr(&u8g2, 2, 60, text_buf);
 
 	u8g2_SendBuffer(&u8g2);
@@ -365,19 +466,60 @@ void oled_update(app_data_t *app_data)
 	{
 	case MAIN_SCREEN:
 	{
-		int menu_position = 2 - (app_data->encoder_data.position % 3);
-		// app_data->encoder_data.position = 0;
-		update_main_screen(app_data, menu_position);
+		update_main_screen(app_data);
 		break;
 	}
 	case CHANGE_TIME_SCREEN:
-		printf("CHANGE_TIME_SCREEN\n");
+		update_change_time_screen(app_data);
 		break;
 	case CHANGE_DATE_SCREEN:
-		printf("CHANGE_DATE_SCREEN\n");
+		update_change_date_screen(app_data);
 		break;
 	case ENV_HISTORY_SCREEN:
 		printf("ENV_HISTORY_SCREEN\n");
 		break;
 	}
+}
+
+void handle_click_event(app_data_t *app_data)
+{
+	if (!app_data->encoder_data.pressed)
+	{
+		return;
+	}
+	
+
+	switch (app_data->screen_mode)
+	{
+	case MAIN_SCREEN:
+	{
+		int menu_position = ((app_data->encoder_data.position % 3) + 3) % 3;
+		switch (menu_position)
+		{
+		case 0:
+			app_data->screen_mode = CHANGE_TIME_SCREEN;
+			break;
+		case 1:
+			app_data->screen_mode = CHANGE_DATE_SCREEN;
+			break;
+		case 2:
+			app_data->screen_mode = ENV_HISTORY_SCREEN;
+			break;
+		default:
+			break;
+		}
+		app_data->encoder_data.position = 0;
+		ESP_LOGI(TAG, "Menu item selected: %d, screen: %d", menu_position, app_data->screen_mode);
+		break;
+	}
+	case CHANGE_TIME_SCREEN:
+		break;
+	case CHANGE_DATE_SCREEN:
+		break;
+	case ENV_HISTORY_SCREEN:
+		break;
+	default:
+		break;
+	}
+	app_data->encoder_data.pressed = false;
 }
