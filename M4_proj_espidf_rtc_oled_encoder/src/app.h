@@ -17,11 +17,20 @@ typedef struct
 	bool pressed;
 } encoder_data_t;
 
+typedef enum
+{
+	MAIN_SCREEN,
+	CHANGE_TIME_SCREEN,
+	CHANGE_DATE_SCREEN,
+	ENV_HISTORY_SCREEN,
+} screen_mode_t;	
+
 typedef struct
 {
 	bme280_data_t bme280_data;
 	struct tm time;
 	encoder_data_t encoder_data;
+	screen_mode_t screen_mode;
 } app_data_t;
 
 app_data_t *get_app_data(void);

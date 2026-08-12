@@ -22,11 +22,11 @@ void app_main(void)
 	bmp280_dev_init(); // Ініціалізація BMP280
 	encoder_dev_init(); // Ініціалізація енкодера
 
-
+	data->screen_mode = MAIN_SCREEN; // Встановлюємо початковий режим екрану
 
 	while (1)
 	{
-		
+
 		rtc_read(data); // Читання часу з RTC
 		bme280_read(data); // Читання даних з BME280
 		oled_update(data); // Оновлення OLED-дисплея
@@ -48,6 +48,6 @@ void app_main(void)
 				 data->encoder_data.position,
 				 data->encoder_data.pressed ? "true" : "false");
 
-		vTaskDelay(pdMS_TO_TICKS(2000)); // Затримка 2 секунди
+		vTaskDelay(pdMS_TO_TICKS(100)); // Затримка 2 секунди
 	}
 }
