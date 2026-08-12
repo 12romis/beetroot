@@ -3,16 +3,26 @@
 #include "ssd1306.h"
 #include "ds1307.h"
 #include "bmp280.h"
+#include "iot_knob.h"
+#include "iot_button.h"
 #include "app.h"
 
 static ssd1306_t oled_dev;
 static i2c_dev_t rtc_dev;
 static bmp280_t bmp_dev;
+static knob_handle_t s_knob = NULL;
+static button_handle_t s_btn = NULL;
 
 // Конфігурація I2C ESP32-S3
 static const gpio_num_t I2C_PORT = I2C_NUM_0;
 static const gpio_num_t I2C_SDA_GPIO = GPIO_NUM_8;
 static const gpio_num_t I2C_SCL_GPIO = GPIO_NUM_9;
+
+//------- Енкодер ------------
+// Фактична розпіновка: CLK->GPIO12, DT->GPIO11, SW->GPIO10
+#define ENC_A GPIO_NUM_12
+#define ENC_B GPIO_NUM_11
+#define ENC_BTN GPIO_NUM_10
 
 static const char *TAG = "APP";
 
@@ -140,6 +150,68 @@ void bmp280_dev_init()
 	{
 		ESP_LOGE(TAG, "bmp280_dev_init: %s", esp_err_to_name(err));
 	}
+}
+
+// Колбек повороту енкодера вліво
+static void encoder_left_cb(void *arg, void *usr_data)
+{
+	app_data_t *data = (app_data_t *)usr_data;
+	data->encoder_data.position--;
+}
+
+// Колбек повороту енкодера вправо
+static void encoder_right_cb(void *arg, void *usr_data)
+{
+	app_data_t *data = (app_data_t *)usr_data;
+	data->encoder_data.position++;
+}
+
+// Колбек натискання кнопки енкодера
+static void encoder_btn_cb(void *arg, void *usr_data)
+{
+	app_data_t *data = (app_data_t *)usr_data;
+	data->encoder_data.pressed = true;
+}
+
+// Ініціалізація енкодера
+void encoder_dev_init()
+{
+	// ----- Обертання (knob) -----
+	knob_config_t knob_cfg = {
+		.default_direction = 0,
+		.gpio_encoder_a = ENC_A,
+		.gpio_encoder_b = ENC_B,
+	};
+
+	s_knob = iot_knob_create(&knob_cfg);
+	if (s_knob == NULL)
+	{
+		ESP_LOGE(TAG, "encoder_dev_init: knob create failed");
+		return;
+	}
+
+	iot_knob_register_cb(s_knob, KNOB_LEFT, encoder_left_cb, &app_data);
+	iot_knob_register_cb(s_knob, KNOB_RIGHT, encoder_right_cb, &app_data);
+
+	// ----- Кнопка енкодера -----
+	button_config_t btn_cfg = {
+		.type = BUTTON_TYPE_GPIO,
+		.long_press_time = 1000,
+		.short_press_time = 50,
+		.gpio_button_config = {
+			.gpio_num = ENC_BTN,
+			.active_level = 0, // енкодер замикає кнопку на GND
+		},
+	};
+
+	s_btn = iot_button_create(&btn_cfg);
+	if (s_btn == NULL)
+	{
+		ESP_LOGE(TAG, "encoder_dev_init: button create failed");
+		return;
+	}
+
+	iot_button_register_cb(s_btn, BUTTON_SINGLE_CLICK, encoder_btn_cb, &app_data);
 }
 
 // Читання часу з RTC

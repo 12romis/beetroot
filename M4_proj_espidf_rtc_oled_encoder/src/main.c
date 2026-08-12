@@ -20,6 +20,8 @@ void app_main(void)
 	oled_dev_init(); // Ініціалізація OLED-дисплея
 	rtc_dev_init(data); // Ініціалізація RTC
 	bmp280_dev_init(); // Ініціалізація BMP280
+	encoder_dev_init(); // Ініціалізація енкодера
+
 
 
 	while (1)
@@ -42,6 +44,10 @@ void app_main(void)
 				 data->bme280_data.humidity,
 				 data->bme280_data.pressure);
 
-		vTaskDelay(pdMS_TO_TICKS(1000)); // Затримка в 1 секунду
+		ESP_LOGI(TAG, "Encoder position: %d, pressed: %s",
+				 data->encoder_data.position,
+				 data->encoder_data.pressed ? "true" : "false");
+
+		vTaskDelay(pdMS_TO_TICKS(2000)); // Затримка 2 секунди
 	}
 }
