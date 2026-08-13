@@ -1,27 +1,26 @@
 #include <stdbool.h>
 #include "esp_log.h"
-#include "iot_knob.h"
-#include "iot_button.h"
+#include "encoder.h" // esp-idf-lib/encoder — обертання (HW timer-based декодер квадратури)
+#include "iot_button.h" // espressif/button — клік/подвійний клік кнопки енкодера (без змін)
 #include "board_config.h"
 #include "app.h"
-#include "encoder.h"
+#include "rotary_encoder.h"
 
 static const char *TAG = "ENCODER";
-static knob_handle_t s_knob = NULL;
+static rotary_encoder_handle_t s_rotary = NULL;
 static button_handle_t s_btn = NULL;
 
-// Колбек повороту енкодера вліво
-static void encoder_left_cb(void *arg, void *usr_data)
+// Колбек подій esp-idf-lib/encoder — нас цікавить лише RE_ET_CHANGED (обертання);
+// кнопку на pin_btn не задаємо, її й надалі обробляє окремо espressif/button нижче.
+static void rotary_encoder_cb(const rotary_encoder_event_t *event, void *ctx)
 {
-	app_data_t *data = (app_data_t *)usr_data;
-	data->encoder_data.position--;
-}
+	if (event->type != RE_ET_CHANGED)
+	{
+		return;
+	}
 
-// Колбек повороту енкодера вправо
-static void encoder_right_cb(void *arg, void *usr_data)
-{
-	app_data_t *data = (app_data_t *)usr_data;
-	data->encoder_data.position++;
+	app_data_t *data = (app_data_t *)ctx;
+	data->encoder_data.position += event->diff;
 }
 
 // Колбек натискання кнопки енкодера
@@ -45,24 +44,21 @@ void encoder_dev_init(void)
 {
 	app_data_t *app_data = get_app_data();
 
-	// ----- Обертання (knob) -----
-	knob_config_t knob_cfg = {
-		.default_direction = 0,
-		.gpio_encoder_a = ENC_A,
-		.gpio_encoder_b = ENC_B,
-	};
+	// ----- Обертання (esp-idf-lib/encoder) -----
+	rotary_encoder_config_t enc_cfg = ROTARY_ENCODER_DEFAULT_CONFIG();
+	enc_cfg.pin_a = ENC_A;
+	enc_cfg.pin_b = ENC_B;
+	enc_cfg.pin_btn = GPIO_NUM_NC; // кнопка лишається на espressif/button, не тут
+	enc_cfg.callback = rotary_encoder_cb;
+	enc_cfg.callback_ctx = app_data;
 
-	s_knob = iot_knob_create(&knob_cfg);
-	if (s_knob == NULL)
+	esp_err_t err = rotary_encoder_create(&enc_cfg, &s_rotary);
+	if (err != ESP_OK)
 	{
-		ESP_LOGE(TAG, "encoder_dev_init: knob create failed");
-		return;
+		ESP_LOGE(TAG, "encoder_dev_init: rotary_encoder_create failed: %s", esp_err_to_name(err));
 	}
 
-	iot_knob_register_cb(s_knob, KNOB_LEFT, encoder_left_cb, app_data);
-	iot_knob_register_cb(s_knob, KNOB_RIGHT, encoder_right_cb, app_data);
-
-	// ----- Кнопка енкодера -----
+	// ----- Кнопка енкодера (без змін) -----
 	button_config_t btn_cfg = {
 		.type = BUTTON_TYPE_GPIO,
 		.long_press_time = 1000,

@@ -11,7 +11,7 @@
 #include "oled.h"
 #include "rtc.h"
 #include "env_sensor.h"
-#include "encoder.h"
+#include "rotary_encoder.h"
 #include "input.h"
 
 static const char *TAG = "MAIN";
@@ -43,7 +43,7 @@ void app_main(void)
 		handle_encoder_input(data); // Обробка обертання/кліку енкодера
 		oled_update(data); // Оновлення OLED-дисплея
 
-		ESP_LOGI(TAG, "Time: %04d-%02d-%02d %02d:%02d:%02d",
+		ESP_LOGD(TAG, "Time: %04d-%02d-%02d %02d:%02d:%02d",
 				 data->time.tm_year + 1900,
 				 data->time.tm_mon + 1,
 				 data->time.tm_mday,
@@ -51,15 +51,15 @@ void app_main(void)
 				 data->time.tm_min,
 				 data->time.tm_sec);
 
-		ESP_LOGI(TAG, "T: %.2f C H: %.2f %% P: %.2f hPa",
+		ESP_LOGD(TAG, "T: %.2f C H: %.2f %% P: %.2f hPa",
 				 data->bme280_data.temperature,
 				 data->bme280_data.humidity,
 				 data->bme280_data.pressure);
 
-		ESP_LOGI(TAG, "Encoder position: %d, pressed: %s",
+		ESP_LOGD(TAG, "Encoder position: %d, pressed: %s",
 				 data->encoder_data.position,
 				 data->encoder_data.pressed ? "true" : "false");
 
-		vTaskDelay(pdMS_TO_TICKS(100)); // Затримка 2 секунди
+		vTaskDelay(pdMS_TO_TICKS(100)); // Затримка
 	}
 }
