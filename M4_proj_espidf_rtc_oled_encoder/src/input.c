@@ -1,4 +1,4 @@
-#include "rtc.h"
+#include "app_rtc.h"
 #include "input.h"
 
 // Обгортання значення в діапазон [min, max] (включно), коректно і для від'ємних зсувів

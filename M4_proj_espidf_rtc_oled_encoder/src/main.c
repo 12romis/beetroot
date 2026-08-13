@@ -9,7 +9,7 @@
 #include "app.h"
 #include "i2c_bus.h"
 #include "oled.h"
-#include "rtc.h"
+#include "app_rtc.h"
 #include "env_sensor.h"
 #include "rotary_encoder.h"
 #include "input.h"

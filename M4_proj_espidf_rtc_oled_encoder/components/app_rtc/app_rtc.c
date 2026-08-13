@@ -4,7 +4,7 @@
 #include "i2cdev.h"
 #include "ds1307.h"
 #include "board_config.h"
-#include "rtc.h"
+#include "app_rtc.h"
 
 static const char *TAG = "RTC";
 static i2c_dev_t rtc_dev;
