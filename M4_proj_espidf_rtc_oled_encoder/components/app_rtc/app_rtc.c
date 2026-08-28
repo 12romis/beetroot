@@ -58,12 +58,30 @@ void rtc_dev_init(app_data_t *app_data)
 		ESP_LOGE(TAG, "rtc_dev_init: %s", esp_err_to_name(err));
 	}
 
-	rtc_set_time(&app_data->time);
-
-	err = ds1307_set_time(&rtc_dev, &app_data->time);
+	// Годинник ще ніколи не запускався (біт Clock Halt) — це перше підключення
+	// або батарейка не тримала час. Лише тоді сідимо часом компіляції, щоб не
+	// перетирати реальний час, який RTC вже тримає завдяки батарейці.
+	bool running = false;
+	err = ds1307_is_running(&rtc_dev, &running);
 	if (err != ESP_OK)
 	{
 		ESP_LOGE(TAG, "rtc_dev_init: %s", esp_err_to_name(err));
+	}
+
+	if (!running)
+	{
+		ESP_LOGI(TAG, "rtc_dev_init: годинник зупинений, виставляю час компіляції");
+		rtc_set_time(&app_data->time);
+
+		err = ds1307_set_time(&rtc_dev, &app_data->time);
+		if (err != ESP_OK)
+		{
+			ESP_LOGE(TAG, "rtc_dev_init: %s", esp_err_to_name(err));
+		}
+	}
+	else
+	{
+		rtc_read(app_data);
 	}
 }
 
